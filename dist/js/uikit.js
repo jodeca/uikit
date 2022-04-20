@@ -141,10 +141,6 @@
       return (document == null ? void 0 : document.defaultView) || window;
     }
 
-    function toMs(time) {
-      return time ? endsWith(time, 'ms') ? toFloat(time) : toFloat(time) * 1000 : 0;
-    }
-
     function isEqual(value, other) {
       return (
         value === other ||
@@ -1740,11 +1736,11 @@
       }
     }
 
-    const stateKey$1 = '_ukPlayer';
+    const stateKey = '_ukPlayer';
     let counter = 0;
     function enableApi(el) {
-      if (el[stateKey$1]) {
-        return el[stateKey$1];
+      if (el[stateKey]) {
+        return el[stateKey];
       }
 
       const youtube = isYoutube(el);
@@ -1753,7 +1749,7 @@
       const id = ++counter;
       let poller;
 
-      return el[stateKey$1] = new Promise((resolve) => {
+      return el[stateKey] = new Promise((resolve) => {
         youtube &&
         once(el, 'load', () => {
           const listener = () => post(el, { event: 'listening', id });
@@ -1788,7 +1784,7 @@
       return intersectRect(
       ...scrollParents(element).
       map((parent) => {
-        const { top, left, bottom, right } = offset(getViewport$1(parent));
+        const { top, left, bottom, right } = offsetViewport(parent);
 
         return {
           top: top - offsetTop,
@@ -1803,7 +1799,7 @@
 
     function scrollTop(element, top) {
       if (isWindow(element) || isDocument(element)) {
-        element = getScrollingElement(element);
+        element = scrollingElement(element);
       } else {
         element = toNode(element);
       }
@@ -1820,12 +1816,13 @@
       return parents.reduce(
       (fn, scrollElement, i) => {
         const { scrollTop, scrollHeight, offsetHeight } = scrollElement;
-        const maxScroll = scrollHeight - getViewportClientHeight(scrollElement);
-        const { height: elHeight, top: elTop } = offset(parents[i - 1] || element);
+        const viewport = offsetViewport(scrollElement);
+        const maxScroll = scrollHeight - viewport.height;
+        const { height: elHeight, top: elTop } = parents[i - 1] ?
+        offsetViewport(parents[i - 1]) :
+        offset(element);
 
-        let top = Math.ceil(
-        elTop - offset(getViewport$1(scrollElement)).top - offsetBy + scrollTop);
-
+        let top = Math.ceil(elTop - viewport.top - offsetBy + scrollTop);
 
         if (offsetBy > 0 && offsetHeight < elHeight + offsetBy) {
           top += offsetBy;
@@ -1883,7 +1880,7 @@
 
       const [scrollElement] = scrollParents(element, /auto|scroll/, true);
       const { scrollHeight, scrollTop } = scrollElement;
-      const viewportHeight = getViewportClientHeight(scrollElement);
+      const { height: viewportHeight } = offsetViewport(scrollElement);
       const maxScroll = scrollHeight - viewportHeight;
       const elementOffsetTop = offsetPosition(element)[0] - offsetPosition(scrollElement)[0];
 
@@ -1894,7 +1891,7 @@
     }
 
     function scrollParents(element, overflowRe, scrollable) {if (overflowRe === void 0) {overflowRe = /auto|scroll|hidden/;}if (scrollable === void 0) {scrollable = false;}
-      const scrollEl = getScrollingElement(element);
+      const scrollEl = scrollingElement(element);
 
       let ancestors = parents(element).reverse();
       ancestors = ancestors.slice(ancestors.indexOf(scrollEl) + 1);
@@ -1909,181 +1906,246 @@
       ancestors.filter(
       (parent) =>
       overflowRe.test(css(parent, 'overflow')) && (
-      !scrollable || parent.scrollHeight > getViewportClientHeight(parent)))).
+      !scrollable || parent.scrollHeight > offsetViewport(parent).height))).
 
 
       reverse();
     }
 
-    function getViewport$1(scrollElement) {
-      return scrollElement === getScrollingElement(scrollElement) ? window : scrollElement;
-    }
+    function offsetViewport(scrollElement) {
+      let viewportElement = getViewport$1(scrollElement);
 
-    // iOS 12 returns <body> as scrollingElement
-    function getViewportClientHeight(scrollElement) {
-      return (
-      scrollElement === getScrollingElement(scrollElement) ?
-      document.documentElement :
-      scrollElement).
-      clientHeight;
-    }
-
-    function getScrollingElement(element) {
-      const { document } = toWindow(element);
-      return document.scrollingElement || document.documentElement;
-    }
-
-    const dirs = {
-      width: ['x', 'left', 'right'],
-      height: ['y', 'top', 'bottom'] };
-
-
-    function positionAt(
-    element,
-    target,
-    elAttach,
-    targetAttach,
-    elOffset,
-    targetOffset,
-    flip,
-    boundary)
-    {
-      elAttach = getPos(elAttach);
-      targetAttach = getPos(targetAttach);
-
-      const flipped = { element: elAttach, target: targetAttach };
-
-      if (!element || !target) {
-        return flipped;
+      // iOS 12 returns <body> as scrollingElement
+      if (viewportElement === scrollingElement(viewportElement)) {
+        viewportElement = document.documentElement;
       }
 
-      const dim = offset(element);
+      let rect = offset(viewportElement);
+      for (let [prop, dir, start, end] of [
+      ['width', 'x', 'left', 'right'],
+      ['height', 'y', 'top', 'bottom']])
+      {
+        if (!isWindow(getViewport$1(viewportElement))) {
+          rect[start] += toFloat(css(viewportElement, "border" + ucfirst(start) + "Width"));
+        }
+        rect[prop] = rect[dir] = (
+        isWindow(viewportElement) ? scrollingElement(viewportElement) : viewportElement)["client" +
+        ucfirst(prop)];
+        rect[end] = rect[prop] + rect[start];
+      }
+      return rect;
+    }
+
+    function scrollingElement(element) {
+      const {
+        document: { scrollingElement } } =
+      toWindow(element);
+      return scrollingElement;
+    }
+
+    function getViewport$1(scrollElement) {
+      return scrollElement === scrollingElement(scrollElement) ? window : scrollElement;
+    }
+
+    const dirs = [
+    ['width', 'x', 'left', 'right'],
+    ['height', 'y', 'top', 'bottom']];
+
+
+    function positionAt(element, target, options) {
+      options = {
+        attach: {
+          element: ['left', 'top'],
+          target: ['left', 'top'],
+          ...options.attach },
+
+        offset: [0, 0],
+        ...options };
+
+
+      const dim = options.flip ?
+      attachToWithFlip(element, target, options) :
+      attachTo(element, target, options);
+
+      offset(element, dim);
+    }
+
+    function attachTo(element, target, options) {
+      let { attach, offset: offsetBy } = {
+        attach: {
+          element: ['left', 'top'],
+          target: ['left', 'top'],
+          ...options.attach },
+
+        offset: [0, 0],
+        ...options };
+
+
+      const position = offset(element);
+      const targetOffset = offset(target);
+      for (const i in dirs) {
+        const [prop, dir, start, end] = dirs[i];
+        position[start] = position[dir] =
+        targetOffset[start] +
+        moveBy(attach.target[i], end, targetOffset[prop]) -
+        moveBy(attach.element[i], end, position[prop]) +
+        +offsetBy[i];
+        position[end] = position[start] + position[prop];
+      }
+      return position;
+    }
+
+    function attachToWithFlip(element, target, options) {
+      const position = attachTo(element, target, options);
       const targetDim = offset(target);
-      const position = targetDim;
+      const viewports = scrollParents(element, /auto|scroll/);
+      const [scrollElement] = viewports;
 
-      moveTo(position, elAttach, dim, -1);
-      moveTo(position, targetAttach, targetDim, 1);
+      let {
+        flip,
+        attach: { element: elAttach, target: targetAttach },
+        offset: elOffset,
+        boundary,
+        viewport } =
+      options;
 
-      elOffset = getOffsets(elOffset, dim.width, dim.height);
-      targetOffset = getOffsets(targetOffset, targetDim.width, targetDim.height);
+      viewports.push(viewport);
 
-      elOffset['x'] += targetOffset['x'];
-      elOffset['y'] += targetOffset['y'];
+      const offsetPosition = { ...position };
+      for (const i in dirs) {
+        const [prop, dir, start, end] = dirs[i];
 
-      position.left += elOffset['x'];
-      position.top += elOffset['y'];
-
-      if (flip) {
-        let boundaries = scrollParents(element).map(getViewport$1);
-
-        if (boundary && !includes(boundaries, boundary)) {
-          boundaries.unshift(boundary);
+        if (flip !== true && !includes(flip, dir)) {
+          continue;
         }
 
-        boundaries = boundaries.map((el) => offset(el));
+        const willFlip =
+        !intersectLine(position, targetDim, i) && intersectLine(position, targetDim, 1 - i);
 
-        each(dirs, (_ref, prop) => {let [dir, align, alignFlip] = _ref;
-          if (!(flip === true || includes(flip, dir))) {
-            return;
+        viewport = getIntersectionArea(
+        ...viewports,
+        willFlip || position[prop] > offset(boundary)[prop] ? null : boundary);
+
+        const isInStartBoundary = position[start] >= viewport[start];
+        const isInEndBoundary = position[end] <= viewport[end];
+
+        if (isInStartBoundary && isInEndBoundary) {
+          continue;
+        }
+
+        let offsetBy;
+
+        // Flip
+        if (willFlip) {
+          if (
+          elAttach[i] === end && isInStartBoundary ||
+          elAttach[i] === start && isInEndBoundary)
+          {
+            continue;
           }
 
-          boundaries.some((boundary) => {
-            const elemOffset =
-            elAttach[dir] === align ?
-            -dim[prop] :
-            elAttach[dir] === alignFlip ?
-            dim[prop] :
-            0;
+          offsetBy =
+          (elAttach[i] === start ?
+          -position[prop] :
+          elAttach[i] === end ?
+          position[prop] :
+          0) + (
+          targetAttach[i] === start ?
+          targetDim[prop] :
+          targetAttach[i] === end ?
+          -targetDim[prop] :
+          0) -
+          elOffset[i] * 2;
 
-            const targetOffset =
-            targetAttach[dir] === align ?
-            targetDim[prop] :
-            targetAttach[dir] === alignFlip ?
-            -targetDim[prop] :
-            0;
+          if (
+          !isInScrollArea(
+          {
+            ...position,
+            [start]: position[start] + offsetBy,
+            [end]: position[end] + offsetBy },
 
-            if (
-            position[align] < boundary[align] ||
-            position[align] + dim[prop] > boundary[alignFlip])
-            {
-              const centerOffset = dim[prop] / 2;
-              const centerTargetOffset =
-              targetAttach[dir] === 'center' ? -targetDim[prop] / 2 : 0;
+          scrollElement,
+          i))
 
-              return (
-                elAttach[dir] === 'center' && (
-                apply(centerOffset, centerTargetOffset) ||
-                apply(-centerOffset, -centerTargetOffset)) ||
-                apply(elemOffset, targetOffset));
-
+          {
+            if (isInScrollArea(position, scrollElement, i)) {
+              continue;
             }
 
-            function apply(elemOffset, targetOffset) {
-              const newVal = toFloat(
-              (position[align] + elemOffset + targetOffset - elOffset[dir] * 2).toFixed(4));
-
-
-              if (newVal >= boundary[align] && newVal + dim[prop] <= boundary[alignFlip]) {
-                position[align] = newVal;
-
-                for (const el of ['element', 'target']) {
-                  if (elemOffset) {
-                    flipped[el][dir] =
-                    flipped[el][dir] === dirs[prop][1] ?
-                    dirs[prop][2] :
-                    dirs[prop][1];
-                  }
-                }
-
-                return true;
-              }
+            if (options.recursion) {
+              return false;
             }
-          });
-        });
-      }
 
-      offset(element, position);
+            const newPos = attachToWithFlip(element, target, {
+              ...options,
+              attach: {
+                element: elAttach.map(flipDir).reverse(),
+                target: targetAttach.map(flipDir).reverse() },
 
-      return flipped;
-    }
+              offset: elOffset.reverse(),
+              flip: flip === true ? flip : [...flip, dirs[1 - i][1]],
+              recursion: true });
 
-    function moveTo(position, attach, dim, factor) {
-      each(dirs, (_ref2, prop) => {let [dir, align, alignFlip] = _ref2;
-        if (attach[dir] === alignFlip) {
-          position[align] += dim[prop] * factor;
-        } else if (attach[dir] === 'center') {
-          position[align] += dim[prop] * factor / 2;
+
+            if (newPos && isInScrollArea(newPos, scrollElement, 1 - i)) {
+              return newPos;
+            }
+          }
+
+          // Move
+        } else {
+          offsetBy =
+          clamp(
+          clamp(position[start], viewport[start], viewport[end] - position[prop]),
+          targetDim[start] - position[prop] + elOffset[i],
+          targetDim[end] - elOffset[i]) -
+          position[start];
         }
-      });
-    }
 
-    function getPos(pos) {
-      const x = /left|center|right/;
-      const y = /top|center|bottom/;
-
-      pos = (pos || '').split(' ');
-
-      if (pos.length === 1) {
-        pos = x.test(pos[0]) ?
-        pos.concat('center') :
-        y.test(pos[0]) ?
-        ['center'].concat(pos) :
-        ['center', 'center'];
+        offsetPosition[start] = position[dir] = position[start] + offsetBy;
+        offsetPosition[end] += offsetBy;
       }
 
-      return {
-        x: x.test(pos[0]) ? pos[0] : 'center',
-        y: y.test(pos[1]) ? pos[1] : 'center' };
-
+      return offsetPosition;
     }
 
-    function getOffsets(offsets, width, height) {
-      const [x, y] = (offsets || '').split(' ');
+    function moveBy(start, end, dim) {
+      return start === 'center' ? dim / 2 : start === end ? dim : 0;
+    }
 
-      return {
-        x: x ? toFloat(x) * (endsWith(x, '%') ? width / 100 : 1) : 0,
-        y: y ? toFloat(y) * (endsWith(y, '%') ? height / 100 : 1) : 0 };
+    function getIntersectionArea() {
+      let rect = {};for (var _len = arguments.length, elements = new Array(_len), _key = 0; _key < _len; _key++) {elements[_key] = arguments[_key];}
+      for (let el of elements.filter(Boolean)) {
+        const offset = offsetViewport(el);
+        for (const [,, start, end] of dirs) {
+          rect[start] = Math.max(rect[start] || 0, offset[start]);
+          rect[end] = Math.min(...[rect[end], offset[end]].filter(Boolean));
+        }
+      }
+      return rect;
+    }
 
+    function isInScrollArea(position, scrollElement, dir) {
+      const viewport = offsetViewport(scrollElement);
+      const [prop,, start, end] = dirs[dir];
+      viewport[start] -= scrollElement["scroll" + ucfirst(start)];
+      viewport[end] = viewport[start] + scrollElement["scroll" + ucfirst(prop)];
+
+      return position[start] >= viewport[start] && position[end] <= viewport[end];
+    }
+
+    function intersectLine(dimA, dimB, dir) {
+      const [,, start, end] = dirs[dir];
+      return dimA[end] > dimB[start] && dimB[end] > dimA[start];
+    }
+
+    function flipDir(prop) {
+      for (const i in dirs) {
+        const index = dirs[i].indexOf(prop);
+        if (~index) {
+          return dirs[1 - i][index % 2 + 2];
+        }
+      }
     }
 
     var util = /*#__PURE__*/Object.freeze({
@@ -2192,7 +2254,6 @@
         toNode: toNode,
         toNodes: toNodes,
         toWindow: toWindow,
-        toMs: toMs,
         isEqual: isEqual,
         swap: swap,
         last: last,
@@ -2231,9 +2292,7 @@
         scrollIntoView: scrollIntoView,
         scrolledOver: scrolledOver,
         scrollParents: scrollParents,
-        getViewport: getViewport$1,
-        getViewportClientHeight: getViewportClientHeight,
-        getScrollingElement: getScrollingElement
+        offsetViewport: offsetViewport
     });
 
     function globalAPI (UIkit) {
@@ -2412,7 +2471,7 @@
         const {
           $options: { computed } } =
         this;
-        const values = { ...this._computed };
+        const values = { ...(initial ? {} : this._computed) };
         this._computed = {};
 
         for (const key in computed) {
@@ -2900,30 +2959,6 @@
     componentAPI(UIkit);
     instanceAPI(UIkit);
 
-    function Core () {
-      if (!inBrowser) {
-        return;
-      }
-
-      let started = 0;
-      on(
-      document,
-      'animationstart',
-      (_ref) => {let { target } = _ref;
-        if ((css(target, 'animationName') || '').match(/^uk-.*(left|right)/)) {
-          started++;
-          css(document.documentElement, 'overflowX', 'hidden');
-          setTimeout(() => {
-            if (! --started) {
-              css(document.documentElement, 'overflowX', '');
-            }
-          }, toMs(css(target, 'animationDuration')) + 100);
-        }
-      },
-      true);
-
-    }
-
     function boot (UIkit) {
       const { connect, disconnect } = UIkit;
 
@@ -3219,7 +3254,7 @@
       computed: {
         items: {
           get(_ref, $el) {let { targets } = _ref;
-            return $$(targets, $el);
+            return $$(targets, $el).filter((el) => $(this.content, el));
           },
 
           watch(items, prev) {
@@ -3506,45 +3541,42 @@
 
       connected() {
         this.pos = this.$props.pos.split('-').concat('center').slice(0, 2);
-        this.dir = this.pos[0];
-        this.align = this.pos[1];
+        this.axis = includes(['top', 'bottom'], this.pos[0]) ? 'y' : 'x';
       },
 
       methods: {
         positionAt(element, target, boundary) {
-          const axis = this.getAxis();
-          const dir = this.pos[0];
-          const align = this.pos[1];
+          const [dir, align] = this.pos;
 
           let { offset: offset$1 } = this;
           if (!isNumeric(offset$1)) {
             const node = $(offset$1);
             offset$1 = node ?
-            offset(node)[axis === 'x' ? 'left' : 'top'] -
-            offset(target)[axis === 'x' ? 'right' : 'bottom'] :
+            offset(node)[this.axis === 'x' ? 'left' : 'top'] -
+            offset(target)[this.axis === 'x' ? 'right' : 'bottom'] :
             0;
           }
           offset$1 = toPx(offset$1) + toPx(getCssVar('position-offset', element));
+          offset$1 = [includes(['left', 'top'], dir) ? -offset$1 : +offset$1, 0];
 
-          const { x, y } = positionAt(
-          element,
-          target,
-          axis === 'x' ? flipPosition(dir) + " " + align : align + " " + flipPosition(dir),
-          axis === 'x' ? dir + " " + align : align + " " + dir,
-          axis === 'x' ? "" + (
-          dir === 'left' ? -offset$1 : offset$1) : " " + (
-          dir === 'top' ? -offset$1 : offset$1),
-          null,
-          this.flip,
-          boundary).
-          target;
+          const attach = {
+            element: [flipPosition(dir), align],
+            target: [dir, align] };
 
-          this.dir = axis === 'x' ? x : y;
-          this.align = axis === 'x' ? y : x;
-        },
 
-        getAxis() {
-          return this.dir === 'top' || this.dir === 'bottom' ? 'y' : 'x';
+          if (this.axis === 'y') {
+            for (const prop in attach) {
+              attach[prop] = attach[prop].reverse();
+            }
+            offset$1 = offset$1.reverse();
+          }
+
+          positionAt(element, target, {
+            attach,
+            offset: offset$1,
+            boundary,
+            flip: this.flip });
+
         } } };
 
     let active$1;
@@ -3581,8 +3613,11 @@
         this.tracker = new MouseTracker();
       },
 
-      connected() {
+      beforeConnect() {
         this.clsDrop = this.$props.clsDrop || "uk-" + this.$options.name;
+      },
+
+      connected() {
         addClass(this.$el, this.clsDrop);
 
         if (this.toggle && !this.target) {
@@ -3758,7 +3793,13 @@
               this.hide(false);
             }
           }),
-          on(window, 'resize', () => this.$emit('resize'))])
+          on(window, 'resize', () => this.$emit()),
+          on(
+          document,
+          'scroll',
+          (_ref4) => {let { target } = _ref4;return target.contains(this.$el) && this.$emit();},
+          true)])
+
           {
             once(this.$el, 'hide', handler, { self: true });
           }
@@ -3778,7 +3819,7 @@
       {
         name: 'hide',
 
-        handler(_ref4) {let { target } = _ref4;
+        handler(_ref5) {let { target } = _ref5;
           if (this.$el !== target) {
             active$1 =
             active$1 === null && within(target, this.$el) && this.isToggled() ?
@@ -3798,9 +3839,7 @@
           if (this.isToggled() && !hasClass(this.$el, this.clsEnter)) {
             this.position();
           }
-        },
-
-        events: ['resize'] },
+        } },
 
 
       methods: {
@@ -3878,16 +3917,17 @@
           const boundaryOffset = offset(boundary);
           const targetOffset = offset(this.target);
           const alignTo = this.boundaryAlign ? boundaryOffset : targetOffset;
+          const prop = this.axis === 'y' ? 'width' : 'height';
+
+          css(this.$el, "max-" + prop, '');
 
           if (this.pos[1] === 'justify') {
-            const prop = this.getAxis() === 'y' ? 'width' : 'height';
             css(this.$el, prop, alignTo[prop]);
-          } else if (
-          this.$el.offsetWidth >
-          Math.max(boundaryOffset.right - alignTo.left, alignTo.right - boundaryOffset.left))
-          {
+          } else if (this.$el.offsetWidth > boundaryOffset.width) {
             addClass(this.$el, this.clsDrop + "-stack");
           }
+
+          css(this.$el, "max-" + prop, boundaryOffset[prop]);
 
           this.positionAt(this.$el, this.boundaryAlign ? boundary : this.target, boundary);
         } } };
@@ -3987,7 +4027,7 @@
 
 
       resizeTargets() {
-        return this.$el.children;
+        return [this.$el, this.$el.children];
       },
 
       connected() {
@@ -4288,8 +4328,7 @@
 
       data: {
         target: '> *',
-        row: true,
-        forceHeight: true },
+        row: true },
 
 
       computed: {
@@ -4305,7 +4344,7 @@
 
 
       resizeTargets() {
-        return this.elements;
+        return [this.$el, this.elements];
       },
 
       update: {
@@ -4330,22 +4369,14 @@
         return { heights: [''], elements };
       }
 
+      css(elements, 'minHeight', '');
       let heights = elements.map(getHeight);
-      let max = Math.max(...heights);
-      const hasMinHeight = elements.some((el) => el.style.minHeight);
-      const hasShrunk = elements.some((el, i) => !el.style.minHeight && heights[i] < max);
+      const max = Math.max(...heights);
 
-      if (hasMinHeight && hasShrunk) {
-        css(elements, 'minHeight', '');
-        heights = elements.map(getHeight);
-        max = Math.max(...heights);
-      }
+      return {
+        heights: elements.map((el, i) => heights[i].toFixed(2) === max.toFixed(2) ? '' : max),
+        elements };
 
-      heights = elements.map((el, i) =>
-      heights[i] === max && toFloat(el.style.minHeight).toFixed(2) !== max.toFixed(2) ? '' : max);
-
-
-      return { heights, elements };
     }
 
     function getHeight(element) {
@@ -5002,16 +5033,19 @@
 
       connected() {
         const media = toMedia(this.media);
-        this.mediaObj = window.matchMedia(media);
-        const handler = () => {
-          this.matchMedia = this.mediaObj.matches;
-          trigger(this.$el, createEvent('mediachange', false, true, [this.mediaObj]));
-        };
-        this.offMediaObj = on(this.mediaObj, 'change', () => {
+        this.matchMedia = true;
+        if (media) {
+          this.mediaObj = window.matchMedia(media);
+          const handler = () => {
+            this.matchMedia = this.mediaObj.matches;
+            trigger(this.$el, createEvent('mediachange', false, true, [this.mediaObj]));
+          };
+          this.offMediaObj = on(this.mediaObj, 'change', () => {
+            handler();
+            this.$emit('resize');
+          });
           handler();
-          this.$emit('resize');
-        });
-        handler();
+        }
       },
 
       disconnected() {var _this$offMediaObj;
@@ -5300,7 +5334,7 @@
       return (el, show) =>
       new Promise((resolve, reject) =>
       once(el, 'show hide', () => {
-        el._reject && el._reject();
+        el._reject == null ? void 0 : el._reject();
         el._reject = reject;
 
         _toggle(el, show);
@@ -5323,6 +5357,10 @@
         }, toMs(css(transitionElement, 'transitionDuration')));
       })).
       then(() => delete el._reject);
+    }
+
+    function toMs(time) {
+      return time ? endsWith(time, 'ms') ? toFloat(time) : toFloat(time) * 1000 : 0;
     }
 
     var modal = {
@@ -5478,8 +5516,6 @@
         toggle: '> a',
         content: '> ul' } };
 
-    const navItem = '.uk-navbar-nav > li > a, .uk-navbar-item, .uk-navbar-toggle';
-
     var navbar = {
       mixins: [Class, Container],
 
@@ -5499,7 +5535,7 @@
 
 
       data: {
-        dropdown: navItem,
+        dropdown: '.uk-navbar-nav > li > a, .uk-navbar-item, .uk-navbar-toggle',
         align: isRtl ? 'right' : 'left',
         clsDrop: 'uk-navbar-dropdown',
         mode: undefined,
@@ -5512,8 +5548,6 @@
         dropbar: false,
         dropbarAnchor: false,
         duration: 200,
-        forceHeight: true,
-        selMinHeight: navItem,
         container: false },
 
 
@@ -5587,9 +5621,23 @@
           immediate: true },
 
 
-        toggles(_ref6, $el) {let { dropdown } = _ref6;
-          return $$(dropdown, $el);
-        } },
+        toggles: {
+          get(_ref6, $el) {let { dropdown } = _ref6;
+            return $$(dropdown, $el);
+          },
+
+          watch() {
+            const justify = hasClass(this.$el, 'uk-navbar-justify');
+            for (const container of $$(
+            '.uk-navbar-nav, .uk-navbar-left, .uk-navbar-right',
+            this.$el))
+            {
+              css(container, 'flexGrow', justify ? $$(this.dropdown, container).length : '');
+            }
+          },
+
+          immediate: true } },
+
 
 
       disconnected() {
@@ -5750,7 +5798,7 @@
           return this.dropbar;
         },
 
-        handler(_, _ref10) {let { $el, dir } = _ref10;
+        handler(_, _ref10) {let { $el, pos: [dir] = [] } = _ref10;
           if (!hasClass($el, this.clsDrop)) {
             return;
           }
@@ -6295,7 +6343,6 @@
       return document.getElementById(decodeURIComponent(el.hash).substring(1));
     }
 
-    const stateKey = '_ukScrollspy';
     var scrollspy = {
       mixins: [Scroll],
 
@@ -6328,9 +6375,13 @@
             return target ? $$(target, $el) : [$el];
           },
 
-          watch(elements) {
+          watch(elements, prev) {
             if (this.hidden) {
               css(filter$1(elements, ":not(." + this.inViewClass + ")"), 'visibility', 'hidden');
+            }
+
+            if (prev) {
+              this.$reset();
             }
           },
 
@@ -6338,33 +6389,50 @@
 
 
 
+      connected() {
+        this._data.elements = new Map();
+        this.registerObserver(
+        observeIntersection(
+        this.elements,
+        (records) => {
+          const elements = this._data.elements;
+          for (const { target: el, isIntersecting } of records) {
+            if (!elements.has(el)) {
+              elements.set(el, {
+                cls: data(el, 'uk-scrollspy-class') || this.cls });
+
+            }
+
+            const state = elements.get(el);
+            if (!this.repeat && state.show) {
+              continue;
+            }
+
+            state.show = isIntersecting;
+          }
+
+          this.$emit();
+        },
+        {
+          rootMargin: toPx(this.offsetTop, 'height') - 1 + "px " + (
+          toPx(this.offsetLeft, 'width') - 1) + "px" },
+
+
+        false));
+
+
+      },
+
       disconnected() {
-        for (const el of this.elements) {var _el$stateKey;
-          removeClass(el, this.inViewClass, ((_el$stateKey = el[stateKey]) == null ? void 0 : _el$stateKey.cls) || '');
-          delete el[stateKey];
+        for (const [el, state] of this._data.elements.entries()) {
+          removeClass(el, this.inViewClass, (state == null ? void 0 : state.cls) || '');
         }
       },
 
       update: [
       {
-        read() {
-          for (const el of this.elements) {
-            if (!el[stateKey]) {
-              el[stateKey] = { cls: data(el, 'uk-scrollspy-class') || this.cls };
-            }
-
-            if (!this.repeat && el[stateKey].show) {
-              continue;
-            }
-
-            el[stateKey].show = isInView(el, this.offsetTop, this.offsetLeft);
-          }
-        },
-
         write(data) {
-          for (const el of this.elements) {
-            const state = el[stateKey];
-
+          for (const [el, state] of data.elements.entries()) {
             if (state.show && !state.inview && !state.queued) {
               state.queued = true;
 
@@ -6381,15 +6449,13 @@
               this.toggle(el, false);
             }
           }
-        },
-
-        events: ['scroll', 'resize'] }],
+        } }],
 
 
 
       methods: {
         toggle(el, inview) {
-          const state = el[stateKey];
+          const state = this._data.elements.get(el);
 
           state.off == null ? void 0 : state.off();
 
@@ -6466,19 +6532,15 @@
 
           const [scrollElement] = scrollParents(targets, /auto|scroll/, true);
           const { scrollTop, scrollHeight } = scrollElement;
-          const max = scrollHeight - getViewportClientHeight(scrollElement);
+          const viewport = offsetViewport(scrollElement);
+          const max = scrollHeight - viewport.height;
           let active = false;
 
           if (scrollTop === max) {
             active = length - 1;
           } else {
             for (const i in targets) {
-              if (
-              offset(targets[i]).top -
-              offset(getViewport$1(scrollElement)).top -
-              this.offset >
-              0)
-              {
+              if (offset(targets[i]).top - viewport.top - this.offset > 0) {
                 break;
               }
               active = +i;
@@ -6612,13 +6674,13 @@
             return false;
           }
 
-          const hide = this.isActive && types.has('resize');
+          const hide = this.active && types.has('resize');
           if (hide) {
             css(this.selTarget, 'transition', '0s');
             this.hide();
           }
 
-          if (!this.isActive) {
+          if (!this.active) {
             height$1 = offset(this.$el).height;
             margin = css(this.$el, 'margin');
           }
@@ -6650,7 +6712,7 @@
           const start = Math.max(top, topOffset) - offset$1;
           const end = bottom ?
           bottom - offset(this.$el).height + overflow - offset$1 :
-          getScrollingElement(this.$el).scrollHeight - windowHeight;
+          document.scrollingElement.scrollHeight - windowHeight;
 
           return {
             start,
@@ -7140,7 +7202,7 @@
           }
 
           // Skip if state does not change e.g. hover + focus received
-          if (this._showState && show === (expanded !== this._showState)) {
+          if (this._showState && show && expanded !== this._showState) {
             // Ensure reset if state has changed through click
             if (!show) {
               this._showState = null;
@@ -7315,9 +7377,6 @@
 
     // register components
     each(components$1, (component, name) => UIkit.component(name, component));
-
-    // core functionality
-    UIkit.use(Core);
 
     boot(UIkit);
 
@@ -8813,7 +8872,10 @@
 
 
           // Image
-          if (type === 'image' || src.match(/\.(avif|jpe?g|a?png|gif|svg|webp)($|\?)/i)) {
+          if (
+          type === 'image' ||
+          src.match(/\.(avif|jpe?g|jfif|a?png|gif|svg|webp)($|\?)/i))
+          {
             try {
               const { width, height } = await getImage(src, attrs.srcset, attrs.size);
               this.setItem(item, createEl('img', { src, width, height, alt, ...attrs }));
@@ -9210,12 +9272,16 @@
 
 
     function transformFn(prop, el, stops) {
-      const unit = getUnit(stops) || { x: 'px', y: 'px', rotate: 'deg' }[prop] || '';
+      let unit = getUnit(stops) || { x: 'px', y: 'px', rotate: 'deg' }[prop] || '';
       let transformFn;
 
       if (prop === 'x' || prop === 'y') {
         prop = "translate" + ucfirst(prop);
         transformFn = (stop) => toFloat(toFloat(stop).toFixed(unit === 'px' ? 0 : 6));
+      } else if (prop === 'scale') {
+        unit = '';
+        transformFn = (stop) =>
+        getUnit([stop]) ? toPx(stop, 'width', el, true) / el.offsetWidth : stop;
       }
 
       if (stops.length === 1) {
@@ -10529,7 +10595,7 @@
         some((scrollEl) => {
           let { scrollTop: scroll, scrollHeight } = scrollEl;
 
-          const { top, bottom, height } = offset(getViewport$1(scrollEl));
+          const { top, bottom, height } = offsetViewport(scrollEl);
 
           if (top < y && top + 35 > y) {
             scroll -= dist;
@@ -10732,10 +10798,12 @@
 
             this.positionAt(this.tooltip, this.$el);
 
+            const [dir, align] = getAlignment(this.tooltip, this.$el, this.pos);
+
             this.origin =
-            this.getAxis() === 'y' ?
-            flipPosition(this.dir) + "-" + this.align :
-            this.align + "-" + flipPosition(this.dir);
+            this.axis === 'y' ?
+            flipPosition(dir) + "-" + align :
+            align + "-" + flipPosition(dir);
           });
 
           this.toggleElement(this.tooltip, true);
@@ -10770,6 +10838,37 @@
       if (!isFocusable(el)) {
         attr(el, 'tabindex', '0');
       }
+    }
+
+    function getAlignment(el, target, _ref) {let [dir, align] = _ref;
+      const elOffset = offset(el);
+      const targetOffset = offset(target);
+      const properties = [
+      ['left', 'right'],
+      ['top', 'bottom']];
+
+
+      for (const props of properties) {
+        if (elOffset[props[0]] >= targetOffset[props[1]]) {
+          dir = props[1];
+          break;
+        }
+        if (elOffset[props[1]] <= targetOffset[props[0]]) {
+          dir = props[0];
+          break;
+        }
+      }
+
+      const props = includes(properties[0], dir) ? properties[1] : properties[0];
+      if (elOffset[props[0]] === targetOffset[props[0]]) {
+        align = props[0];
+      } else if (elOffset[props[1]] === targetOffset[props[1]]) {
+        align = props[1];
+      } else {
+        align = 'center';
+      }
+
+      return [dir, align];
     }
 
     var upload = {
